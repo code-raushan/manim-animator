@@ -9,7 +9,5 @@ wheels/
 # Virtual environments
 .venv
 .env
-
 media/
-
 generated_manim_scene.py
