@@ -137,74 +137,92 @@ class ManimRunner:
 
 # --- Main Application Logic ---
 
-def generate_manim_script_with_gemini(user_prompt, scene_name):
+def generate_manim_script_with_anthropic(user_prompt, scene_name):
     """
-    Generates a Manim Python script using a hypothetical Gemini model.
+    Generates a Manim Python script using the Anthropic Claude model.
     """
-    print(f"Generating Manim script for prompt: '{user_prompt}' using Gemini model...")
+    print(f"Generating Manim script for prompt: '{user_prompt}' using Anthropic Claude model...")
 
-    # Construct a detailed prompt for the Gemini model
-    # This prompt should guide the model to produce a valid Manim script.
-    gemini_system_prompt_template = '''
+    # Construct a detailed prompt for the Claude model
+    # This prompt guides the model to produce a valid Manim script.
+    # Claude typically uses a system prompt.
+    system_prompt = '''
 You are an expert Manim programmer. Your task is to take a natural language prompt
-from a user and convert it into a complete, runnable Python script for Manim Community edition.
+from a user and convert it into a *fully implemented, complete, and error-free*, runnable Python script for Manim Community edition.
 
 The script should contain one class named '{scene_name}' that inherits from 'manim.Scene'.
-All animation logic should be within the 'construct' method of this class.
+All animation logic must be within the 'construct' method of this class.
 Ensure all necessary Manim objects are imported (e.g., from 'manim import *').
 Include 'import numpy as np' if complex positioning or math is likely needed.
 
-User's animation prompt: "{user_prompt}"
+**Important Instructions for Code Generation:**
+1.  **Produce only the Python code** for the Manim script. Do not include any explanations, markdown formatting, or any text other than the script itself.
+2.  The script must be **ready to be saved to a .py file and executed directly without any modifications or runtime errors.**
+3.  **Implement all aspects of the user's prompt.** Do not leave any parts of the animation unimplemented.
+4.  **Do NOT use placeholder comments** (e.g., "# ... TODO ...", "# ... add code here ...", "# Placeholder for ..."). The generated script must be complete.
+5.  If the user prompt implies multiple scenes, steps, or complex sequences, **ensure all are fully coded within the `construct` method.**
+6.  **Pay close attention to indexing for Mobjects, especially `MathTex` objects.** 
+    *   When working with parts of `MathTex` objects (e.g., `tex_object[0][i]`), ensure that the indices are valid and within the bounds of the object's structure. 
+    *   Consider generating code that checks the number of `submobjects` or parts before attempting to access them by a specific index, if complex indexing is necessary.
+    *   If possible, for `MathTex`, prefer methods like `get_part_by_tex` if you need to reference specific TeX strings, as this can be more robust than numerical indexing.
+    *   The goal is to avoid `IndexError` or other runtime issues related to Mobject manipulation.
+7.  **Strive for robust code.** If there are multiple ways to achieve an animation, prefer the one that is less prone to common errors.
+8.  **IMPORTANT: Generate the complete script.** Do not truncate or leave parts incomplete. The entire animation sequence must be fully implemented.
+9.  **Use appropriate wait times** between animations to ensure smooth transitions and readability.
+10. **Handle cleanup properly** by removing or fading out objects when they are no longer needed.
 
-Produce only the Python code for the Manim script. Do not include any explanations,
-markdown formatting, or any text other than the script itself.
-The script should be ready to be saved to a .py file and executed directly.
-Example of expected output structure:
+Example of expected output structure (this is just a minimal example, your output should be complete based on the user's prompt):
 from manim import *
 import numpy as np
 
 class {scene_name}(Scene):
     def construct(self):
-        # ... Manim code based on the prompt ...
-        circle = Circle()
-        self.play(Create(circle))
+        # ... Complete Manim code based on the prompt ...
+        # For instance, if the prompt asks for a square and then a circle:
+        square = Square()
+        self.play(Create(square))
         self.wait(1)
-'''
-    gemini_system_prompt = gemini_system_prompt_template.format(scene_name=scene_name, user_prompt=user_prompt)
+        circle = Circle()
+        self.play(Transform(square, circle))
+        self.wait(1)
+        # ... and so on for the entire animation requested.
+'''.format(scene_name=scene_name) # scene_name is already part of the system prompt
 
-    # --- Gemini API Call ---
+    user_message_content = f"User's animation prompt: {user_prompt}"
+
+    # --- Anthropic API Call ---
     try:
-        import google.generativeai as genai
+        from anthropic import Anthropic, APIError
 
-        # Configure the API key (ensure this is done securely, e.g., via environment variables)
-        # For example, set the GOOGLE_API_KEY environment variable.
-        genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-        # If the above line is commented out, ensure you have configured authentication in your environment.
+        client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-        # Initialize the model
-        # Using 'gemini-pro' as a stable and capable model.
-        # Replace with 'gemini-1.5-pro-latest' if you have access and prefer it.
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
-
-        # Generate content
-        print("Sending prompt to Gemini model...")
-        response = model.generate_content(gemini_system_prompt)
+        # Initialize the model and generate content
+        print("Sending prompt to Anthropic Claude model...")
+        response = client.messages.create(
+            model="claude-3-7-sonnet-latest", # Using Claude 3.7 Sonnet
+            max_tokens=16000, # Significantly increased max_tokens for complete script generation
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": user_message_content
+                }
+            ]
+        )
         
-        if response.parts:
-            manim_script_content = "".join(part.text for part in response.parts if hasattr(part, 'text'))
-        elif hasattr(response, 'text') and response.text: # Fallback for older response structures or simpler responses
-             manim_script_content = response.text
+        if response.content and isinstance(response.content, list) and response.content[0].type == "text":
+            manim_script_content = response.content[0].text
         else:
-            print("Error: Gemini API response did not contain text content.")
-            # print(f"Full API Response: {response}") # For debugging
+            print("Error: Anthropic API response did not contain expected text content.")
+            print(f"Full API Response: {response}") # For debugging
             return None
         
-        # It's good practice to check if the model blocked the prompt/response
-        if not manim_script_content and response.prompt_feedback and response.prompt_feedback.block_reason:
-            print(f"Error: Prompt was blocked by Gemini API. Reason: {response.prompt_feedback.block_reason}")
-            return None
-        if response.candidates and response.candidates[0].finish_reason != 'STOP':
-            print(f"Warning: Gemini model did not finish generation naturally. Reason: {response.candidates[0].finish_reason}")
+        # It's good practice to check the stop reason
+        if response.stop_reason not in ["end_turn", "max_tokens"]: # "stop_sequence" is also a valid stop for some models/setups
+            print(f"Warning: Anthropic model did not finish generation naturally. Stop Reason: {response.stop_reason}")
+            if response.stop_reason == "max_tokens":
+                print("Warning: Response was truncated due to token limit. Consider increasing max_tokens or simplifying the prompt.")
+                return None
 
         # Clean up potential Markdown code block delimiters
         content_lines = manim_script_content.strip().splitlines()
@@ -224,26 +242,33 @@ class {scene_name}(Scene):
             manim_script_content = "\n".join(content_lines).strip()
 
     except ImportError:
-        print("Error: The 'google-generativeai' library is not installed. Please install it using 'pip install google-generativeai'.")
+        print("Error: The 'anthropic' library is not installed. Please install it using 'uv pip install anthropic'.")
+        return None
+    except APIError as e:
+        # Check if the error is due to a missing API key
+        if "API key" in str(e).lower():
+            print("Error: ANTHROPIC_API_KEY not found or invalid. Please set the ANTHROPIC_API_KEY environment variable.")
+        else:
+            print(f"Error during Anthropic API call: {e}")
         return None
     except Exception as e:
-        print(f"Error during Gemini API call: {e}")
+        print(f"Error during Anthropic API call: {e}")
         # For now, fall back to placeholder if API call fails
-        print("Placeholder: Using a dummy Manim script due to Gemini API call failure.")
+        print("Placeholder: Using a dummy Manim script due to Anthropic API call failure.")
         manim_script_content_template = '''
 from manim import *
 import numpy as np
 
 class {scene_name}(Scene):
     def construct(self):
-        # Script generated based on prompt: "{user_prompt}" (API Call Failed)
-        text = Text("Gemini API call failed. This is a fallback script.")
+        # Script generated based on prompt: "{user_prompt}" (Anthropic API Call Failed)
+        text = Text("Anthropic API call failed. This is a fallback script.")
         self.play(Write(text))
         self.wait(2)
 '''
         manim_script_content = manim_script_content_template.format(scene_name=scene_name, user_prompt=user_prompt)
         return manim_script_content
-    # --- End of Gemini API Call ---
+    # --- End of Anthropic API Call ---
 
     return manim_script_content
 
@@ -259,22 +284,22 @@ def main():
 
     args = parser.parse_args()
 
-    print("Generating Manim script using Gemini (simulated)...")
-    manim_script_content = generate_manim_script_with_gemini(args.prompt, args.scene_name)
+    print("Generating Manim script using Anthropic Claude...")
+    manim_script_content = generate_manim_script_with_anthropic(args.prompt, args.scene_name)
 
     if not manim_script_content:
-        print("Could not generate Manim script from the prompt using Gemini. Exiting.")
+        print("Could not generate Manim script from the prompt using Anthropic Claude. Exiting.")
         return
 
-    # print("\nParsed commands:") # No longer applicable with Gemini
+    # print("\nParsed commands:") # No longer applicable with LLM
     # for cmd in parsed_commands:
     #     print(f"- {cmd}")
 
-    # print("\nGenerating Manim code...") # Gemini does this directly
+    # print("\nGenerating Manim code...") # LLM does this directly
     # code_generator = ManimCodeGenerator(scene_name=args.scene_name)
     # manim_script_content = code_generator.generate_code(parsed_commands)
 
-    print("\n--- Generated Manim Script (from Gemini simulation) ---")
+    print("\n--- Generated Manim Script (from Anthropic Claude) ---")
     print(manim_script_content)
     print("--- End of Script ---")
 
